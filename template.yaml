@@ -1,0 +1,93 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Transform: AWS::Serverless-2016-10-31
+Description: >
+  medigate-demo
+
+  A poc project for medigate-demo
+
+Parameters:
+  # SourceBucket:
+  #   Type: String
+  #   Default: medigate-600669894233
+  LambdaSecurityGrp:
+    Type: String
+    Default: sg-0e222e65be8dde84b
+  LambdaSubnet1:
+    Type: String
+    Default: subnet-036a842663abbb729
+  LambdaSubnet2:
+    Type: String
+    Default: subnet-08f829d4ca31c3fd2
+
+# More info about Globals: https://github.com/awslabs/serverless-application-model/blob/master/docs/globals.rst
+Globals:
+  Function:
+    Timeout: 300
+    MemorySize: 128
+
+Resources:
+
+# Source S3 bucket
+  SourceBucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketName: !Sub "medigate-bucket-${AWS::AccountId}"
+      AccessControl: Private
+
+  MedigateDemoLambdaLayer:
+    Type: AWS::Serverless::LayerVersion
+    Properties:
+      LayerName: pg8000-layer
+      Description: Lambda layer for pg8000 package
+      ContentUri: dependencies/
+      CompatibleRuntimes:
+        - python3.7
+        - python3.8
+        - python3.9
+        - python3.11   
+
+  BackendFunction:
+    Type: AWS::Serverless::Function # More info about Function Resource: https://github.com/awslabs/serverless-application-model/blob/master/versions/2016-10-31.md#awsserverlessfunction
+    Properties:
+      CodeUri: data_mover/
+      Handler: app.lambda_handler
+      Runtime: python3.11
+      Architectures:
+        - x86_64
+      Layers:
+        - !Ref MedigateDemoLambdaLayer
+      Policies:
+        - AWSLambdaExecute
+        - S3ReadPolicy:
+            BucketName: !Sub "medigate-bucket-${AWS::AccountId}"
+        - Version: '2012-10-17'
+          Statement:
+            - Effect: Allow
+              Action:
+                - secretsmanager:GetSecretValue
+              Resource: '*'
+      VpcConfig:
+        SecurityGroupIds:
+          - !Ref LambdaSecurityGrp
+        SubnetIds:
+          - !Ref LambdaSubnet1
+          - !Ref LambdaSubnet2
+      Events:
+        FileUpload:
+          Type: S3
+          Properties:
+            Bucket: !Ref SourceBucket
+            Events: s3:ObjectCreated:Put
+            Filter:
+              S3Key:
+                Rules:
+                  - Name: suffix
+                    Value: .csv
+
+Outputs:
+  BackendFunction:
+    Description: "AWS Lambda function to import CSV from S3"
+    Value: !GetAtt BackendFunction.Arn
+  BackendFunctionIamRole:
+    Description: "Implicit IAM Role created for backendfunction"
+    Value: !GetAtt BackendFunctionRole.Arn
